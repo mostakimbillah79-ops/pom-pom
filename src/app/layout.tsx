@@ -4,8 +4,9 @@ import { Navbar } from '@/components/Navbar'
 import { Toaster } from 'sonner'
 
 export const metadata: Metadata = {
-  title: 'Pom Pom - Fast Food & Restaurant Management System',
-  description: 'Pom Pom Restaurant, Jhenaidah. Passion of Making • Promise of More.',
+title: "Pom Pom - Fast Food & Restaurant
+        Passion of Making . Promise of More ",
+description: "Pom Pom Fast Food, Jhenaidah.",
   icons: {
     icon: '/logo.png',
   },
