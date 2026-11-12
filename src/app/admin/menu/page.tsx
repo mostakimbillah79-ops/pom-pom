@@ -25,6 +25,9 @@ export default function AdminMenuPage() {
   const [category, setCategory] = useState('Chicken')
   const [imageUrl, setImageUrl] = useState('/menu-card.png')
   const [description, setDescription] = useState('')
+  
+  // Unique key to reset file input completely on every upload
+  const [fileInputKey, setFileInputKey] = useState<number>(Date.now())
 
   useEffect(() => {
     fetchMenu()
@@ -52,7 +55,7 @@ export default function AdminMenuPage() {
     setLoading(false)
   }
 
-  // Fixed & Robust Image Upload & Preview Handler
+  // Fixed Image Upload Handler (Clears old memory & forces new image update)
   function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -72,18 +75,22 @@ export default function AdminMenuPage() {
         const ctx = canvas.getContext('2d')
         if (ctx) {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-          const compressed = canvas.toDataURL('image/jpeg', 0.8)
+          const compressed = canvas.toDataURL('image/jpeg', 0.85)
           setImageUrl(compressed)
         } else {
           setImageUrl(resultString)
         }
+        // Reset file input so same or new file triggers change event cleanly
+        setFileInputKey(Date.now())
       }
       img.onerror = () => {
         setImageUrl(resultString)
+        setFileInputKey(Date.now())
       }
       img.src = resultString
     }
     reader.readAsDataURL(file)
+    e.target.value = ''
   }
 
   async function handleMoveOrder(index: number, direction: 'up' | 'down') {
@@ -120,6 +127,7 @@ export default function AdminMenuPage() {
     setCategory('Chicken')
     setImageUrl('/menu-card.png')
     setDescription('')
+    setFileInputKey(Date.now())
   }
 
   function startEdit(item: MenuItem) {
@@ -129,6 +137,7 @@ export default function AdminMenuPage() {
     setCategory(item.category || 'Chicken')
     setImageUrl(item.image_url || '/menu-card.png')
     setDescription(item.description || '')
+    setFileInputKey(Date.now())
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -166,7 +175,7 @@ export default function AdminMenuPage() {
     }
 
     resetForm()
-    alert('মেনু আইটেম ও ছবি সফলভাবে সেভ হয়েছে!')
+    alert('মেনু আইটেম ও নতুন ছবি সফলভাবে সেভ হয়েছে!')
   }
 
   async function handleDelete(id: string | number) {
@@ -247,19 +256,20 @@ export default function AdminMenuPage() {
             />
           </div>
 
-          {/* Computer Drive Image Upload */}
+          {/* Computer Drive Image Upload with complete memory reset */}
           <div className="sm:col-span-2 p-4 border rounded-2xl bg-neutral-50 flex flex-col sm:flex-row items-center gap-4">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={imageUrl}
               alt="Preview"
-              className="w-24 h-24 rounded-xl object-cover border bg-white shrink-0"
+              className="w-24 h-24 rounded-xl object-cover border bg-white shrink-0 shadow-sm"
             />
             <div className="w-full space-y-2">
-              <label className="inline-flex items-center gap-2 px-4 py-2.5 bg-neutral-900 text-white rounded-xl text-xs font-bold cursor-pointer hover:bg-black">
+              <label className="inline-flex items-center gap-2 px-4 py-2.5 bg-neutral-900 text-white rounded-xl text-xs font-bold cursor-pointer hover:bg-black transition-colors">
                 <Upload className="w-4 h-4" />
-                <span>কম্পিউটার ড্রাইভ থেকে ছবি সিলেক্ট করুন</span>
+                <span>কম্পিউটার ড্রাইভ থেকে নতুন ছবি সিলেক্ট করুন</span>
                 <input
+                  key={fileInputKey}
                   type="file"
                   accept="image/*"
                   onChange={handleImageUpload}
@@ -267,7 +277,7 @@ export default function AdminMenuPage() {
                 />
               </label>
               <p className="text-[11px] text-neutral-500">
-                ছবি সিলেক্ট করার সাথে সাথেই প্রিভিউ দেখতে পাবেন এবং সেভ করলে সাইটে আপডেট হয়ে যাবে।
+                পুরাতন ছবি স্বয়ংক্রিয়ভাবে মুছে যাবে এবং নতুন সিলেক্ট করা ছবি প্রিভিউ ও সেভ হবে।
               </p>
             </div>
           </div>
