@@ -1,0 +1,42 @@
+// Add these models to your existing prisma/schema.prisma
+
+model MenuCategory {
+  id        String   @id @default(cuid())
+  name_bn   String   @unique
+  name_en   String   @unique
+  order     Int      @default(0)
+  items     MenuItem[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  name_bn     String
+  name_en     String
+  price       Float
+  description String?
+  categoryId  String
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([categoryId])
+}
+
+model RawMaterial {
+  id                String   @id @default(cuid())
+  name_bn          String   @unique
+  name_en          String   @unique
+  unit_bn          String
+  unit_en          String
+  totalPurchased   Float
+  currentStock     Float
+  unitPrice        Float
+  createdAt        DateTime @default(now())
+  lastUpdated      DateTime @updatedAt
+
+  @@index([name_bn])
+}
