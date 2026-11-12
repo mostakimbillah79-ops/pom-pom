@@ -1,466 +1,329 @@
+/*
+=== Supabase SQL: আগে এই অংশটি SQL Editor-এ একবার চালান ===
+
+CREATE SEQUENCE IF NOT EXISTS public.orders_token_number_seq;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS token_number bigint;
+
+WITH numbered AS (
+  SELECT id, row_number() OVER (ORDER BY created_at, id) AS rn
+  FROM public.orders
+  WHERE token_number IS NULL
+)
+UPDATE public.orders AS o
+SET token_number = numbered.rn
+FROM numbered
+WHERE o.id = numbered.id;
+
+SELECT setval(
+  'public.orders_token_number_seq',
+  COALESCE(MAX(token_number), 1),
+  MAX(token_number) IS NOT NULL
+)
+FROM public.orders;
+
+CREATE OR REPLACE FUNCTION public.assign_order_token_number()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.token_number IS NULL THEN
+    NEW.token_number := nextval('public.orders_token_number_seq');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS orders_assign_token_number ON public.orders;
+CREATE TRIGGER orders_assign_token_number
+BEFORE INSERT ON public.orders
+FOR EACH ROW
+EXECUTE FUNCTION public.assign_order_token_number();
+
+CREATE UNIQUE INDEX IF NOT EXISTS orders_token_number_unique
+ON public.orders(token_number);
+
+=== এরপর এই ফাইলটি আপনার বর্তমান POS page-এর বদলে বসান ===
+ধারণা: order_items-এ order_id, item_name, quantity, price কলাম আছে;
+restaurant_tables-এ id, table_number, status কলাম আছে।
+*/
+
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Order, RestaurantSettings } from '@/types'
 import { useReactToPrint } from 'react-to-print'
 import { CustomerReceipt } from '@/components/receipts/CustomerReceipt'
 import { KitchenReceipt } from '@/components/receipts/KitchenReceipt'
 import { toast } from 'sonner'
-import {
-  Receipt,
-  Printer,
-  CreditCard,
-  DollarSign,
-  Smartphone,
-  CheckCircle,
-  Search,
-  Trash2,
-  RotateCcw,
-  AlertTriangle,
-} from 'lucide-react'
+import { Receipt, Printer, CreditCard, DollarSign, Smartphone, CheckCircle, Search, Plus, Trash2 } from 'lucide-react'
 
-type OrderWithToken = Order & {
-  token_number?: number | string | null
-  token_no?: number | string | null
-  serial_number?: number | string | null
+type OrderRow = Order & { token_number?: number | string | null }
+type RestaurantTable = { id: string; table_number: string | number; status: string }
+type DraftItem = { item_name: string; quantity: number; price: number }
+
+function tokenOf(order: Order): string {
+  const token = (order as OrderRow).token_number
+  return token == null ? '—' : String(token).padStart(3, '0')
 }
 
-function getOrderToken(order: Order): string {
-  const row = order as OrderWithToken
-  const token = row.token_number ?? row.token_no ?? row.serial_number
-  return token == null || token === '' ? 'সিরিয়াল নেই' : String(token).padStart(3, '0')
-}
-
-function getOrderTypeLabel(order: Order): string {
-  const type = String(order.order_type ?? '').toLowerCase()
-
-  if (type === 'dine_in' || type === 'house_in' || type === 'house-in') {
-    const tableNumber = order.table?.table_number
-    return tableNumber ? `Dine In · টেবিল ${tableNumber}` : 'Dine In'
+function orderTypeOf(order: Order): string {
+  if (order.order_type === 'dine_in') {
+    const table = order.table?.table_number
+    return table ? `Dine In · টেবিল ${table}` : 'Dine In'
   }
-  if (type === 'takeaway' || type === 'take_away' || type === 'take-away') return 'Take Away'
-  if (type === 'delivery') return 'Delivery'
-  return 'অন্যান্য'
+  if (order.order_type === 'delivery') return 'Delivery'
+  return 'Take Away'
 }
 
-const statusLabels: Record<string, string> = {
-  new: 'নতুন',
-  preparing: 'রান্না হচ্ছে',
-  ready: 'প্রস্তুত',
-  served: 'পরিশোধিত / সার্ভড',
-  cancelled: 'বাতিল',
+const statusText: Record<string, string> = {
+  new: 'নতুন', preparing: 'রান্না হচ্ছে', ready: 'প্রস্তুত', served: 'পরিশোধিত', cancelled: 'বাতিল',
 }
 
 export default function PosBillingPage() {
   const [orders, setOrders] = useState<Order[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
-  const [searchTerm, setSearchTerm] = useState<string>('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [activeOrderForReceipt, setActiveOrderForReceipt] = useState<Order | null>(null)
-  const [activeOrderForKot, setActiveOrderForKot] = useState<Order | null>(null)
-  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState<boolean>(false)
-
+  const [tables, setTables] = useState<RestaurantTable[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [search, setSearch] = useState('')
+  const [orderType, setOrderType] = useState<'dine_in' | 'takeaway'>('dine_in')
+  const [tableId, setTableId] = useState('')
+  const [customerName, setCustomerName] = useState('')
+  const [customerPhone, setCustomerPhone] = useState('')
+  const [discount, setDiscount] = useState(0)
+  const [items, setItems] = useState<DraftItem[]>([{ item_name: '', quantity: 1, price: 0 }])
+  const [activeReceipt, setActiveReceipt] = useState<Order | null>(null)
+  const [activeKot, setActiveKot] = useState<Order | null>(null)
   const [settings, setSettings] = useState<RestaurantSettings>({
-    restaurant_name: 'Pom Pom',
-    address: 'Jhenaidah',
-    phone: '',
-    whatsapp: '',
-    tax_rate: '0',
-    currency_symbol: '৳',
+    restaurant_name: 'Pom Pom', address: 'Jhenaidah', phone: '', whatsapp: '', tax_rate: '0', currency_symbol: '৳',
   })
+  const receiptRef = useRef<HTMLDivElement>(null)
+  const kotRef = useRef<HTMLDivElement>(null)
+  const printReceipt = useReactToPrint({ contentRef: receiptRef })
+  const printKot = useReactToPrint({ contentRef: kotRef })
 
-  const customerReceiptRef = useRef<HTMLDivElement>(null)
-  const kitchenReceiptRef = useRef<HTMLDivElement>(null)
+  const subtotal = useMemo(
+    () => items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.price || 0), 0),
+    [items],
+  )
+  const total = Math.max(0, subtotal - Number(discount || 0))
 
-  const handlePrintCustomerReceipt = useReactToPrint({ contentRef: customerReceiptRef })
-  const handlePrintKitchenReceipt = useReactToPrint({ contentRef: kitchenReceiptRef })
+  useEffect(() => { void loadData() }, [])
 
-  useEffect(() => {
-    void fetchOrders()
-  }, [])
-
-  async function fetchOrders() {
+  async function loadData() {
     setLoading(true)
     try {
-      const [ordersRes, settingsRes] = await Promise.all([
-        supabase
-          .from('orders')
-          .select('*, table:restaurant_tables(*), order_items(*)')
-          .order('created_at', { ascending: false }),
+      const [ordersResult, tablesResult, settingsResult] = await Promise.all([
+        supabase.from('orders').select('*, table:restaurant_tables(*), order_items(*)').order('created_at', { ascending: false }),
+        supabase.from('restaurant_tables').select('id, table_number, status').eq('status', 'available').order('table_number'),
         supabase.from('settings').select('*'),
       ])
-
-      if (ordersRes.error) throw ordersRes.error
-      if (ordersRes.data) setOrders(ordersRes.data as Order[])
-
-      if (settingsRes.error) throw settingsRes.error
-      if (settingsRes.data) {
-        const map: Record<string, string> = {}
-        settingsRes.data.forEach((setting) => {
-          map[setting.key] = setting.value
-        })
-        setSettings((prev) => ({
-          ...prev,
-          restaurant_name: map.restaurant_name || prev.restaurant_name,
-          address: map.address || prev.address,
-          phone: map.phone || prev.phone,
-          whatsapp: map.whatsapp || prev.whatsapp,
-        }))
-      }
-    } catch (err) {
-      console.error(err)
+      if (ordersResult.error) throw ordersResult.error
+      if (tablesResult.error) throw tablesResult.error
+      if (settingsResult.error) throw settingsResult.error
+      setOrders((ordersResult.data ?? []) as Order[])
+      setTables((tablesResult.data ?? []) as RestaurantTable[])
+      const map: Record<string, string> = {}
+      settingsResult.data?.forEach((row) => { map[row.key] = row.value })
+      setSettings((old) => ({
+        ...old,
+        restaurant_name: map.restaurant_name || old.restaurant_name,
+        address: map.address || old.address,
+        phone: map.phone || old.phone,
+        whatsapp: map.whatsapp || old.whatsapp,
+      }))
+    } catch (error) {
+      console.error(error)
       toast.error('অর্ডার লোড করতে সমস্যা হয়েছে')
     } finally {
       setLoading(false)
     }
   }
 
-  async function handlePayment(order: Order, method: 'cash' | 'bkash' | 'nagad' | 'card') {
+  function updateItem(index: number, field: keyof DraftItem, value: string) {
+    setItems((current) => current.map((item, i) => i === index
+      ? { ...item, [field]: field === 'item_name' ? value : Number(value) }
+      : item))
+  }
+
+  async function createCounterOrder(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const cleanItems = items.filter((item) => item.item_name.trim() && item.quantity > 0 && item.price >= 0)
+    if (!cleanItems.length) return toast.error('অন্তত একটি আইটেমের নাম, পরিমাণ ও দাম দিন')
+    if (orderType === 'dine_in' && !tableId) return toast.error('Dine In অর্ডারের জন্য টেবিল বেছে নিন')
+    if (Number(discount) > subtotal) return toast.error('ছাড় সাবটোটালের বেশি হতে পারবে না')
+
+    setSaving(true)
+    let createdOrderId: string | null = null
     try {
-      const { error: billError } = await supabase.from('bills').insert({
-        order_id: order.id,
-        subtotal: order.subtotal,
-        discount: order.discount,
-        tax: 0,
-        total: order.total,
-        payment_method: method,
-      })
-
-      if (billError && !billError.message.toLowerCase().includes('unique')) throw billError
-
-      const { error: orderUpdateError } = await supabase
+      const { data: created, error: createError } = await supabase
         .from('orders')
-        .update({ status: 'served' })
-        .eq('id', order.id)
-      if (orderUpdateError) throw orderUpdateError
+        .insert({
+          order_type: orderType,
+          table_id: orderType === 'dine_in' ? tableId : null,
+          customer_name: customerName.trim() || 'কাউন্টার কাস্টমার',
+          customer_phone: customerPhone.trim() || null,
+          subtotal,
+          discount: Number(discount || 0),
+          total,
+          status: 'new',
+        })
+        .select('id')
+        .single()
+      if (createError) throw createError
+      createdOrderId = created.id
 
-      if (order.table_id) {
-        const { error: tableUpdateError } = await supabase
-          .from('restaurant_tables')
-          .update({ status: 'available' })
-          .eq('id', order.table_id)
-        if (tableUpdateError) throw tableUpdateError
+      const { error: itemError } = await supabase.from('order_items').insert(
+        cleanItems.map((item) => ({
+          order_id: created.id,
+          item_name: item.item_name.trim(),
+          quantity: Number(item.quantity),
+          price: Number(item.price),
+        })),
+      )
+      if (itemError) throw itemError
+
+      if (orderType === 'dine_in' && tableId) {
+        const { error: tableError } = await supabase.from('restaurant_tables').update({ status: 'occupied' }).eq('id', tableId)
+        if (tableError) throw tableError
       }
 
-      const methodLabels = { cash: 'ক্যাশ', bkash: 'বিকাশ', nagad: 'নগদ', card: 'কার্ড' }
-      toast.success(`বিল পরিশোধ সম্পন্ন · ${methodLabels[method]}`)
-      await fetchOrders()
-      printCustomer(order)
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'অজানা ত্রুটি'
-      toast.error(`বিল প্রসেস করতে সমস্যা: ${message}`)
+      toast.success('অর্ডার তৈরি হয়েছে · সিরিয়াল POS তালিকায় দেখুন')
+      setCustomerName('')
+      setCustomerPhone('')
+      setDiscount(0)
+      setTableId('')
+      setItems([{ item_name: '', quantity: 1, price: 0 }])
+      await loadData()
+    } catch (error) {
+      if (createdOrderId) await supabase.from('orders').delete().eq('id', createdOrderId)
+      console.error(error)
+      toast.error(`অর্ডার তৈরি হয়নি: ${error instanceof Error ? error.message : 'অজানা ত্রুটি'}`)
+    } finally {
+      setSaving(false)
     }
   }
 
-  async function handleDeleteOrder(orderId: string) {
-    if (!confirm('আপনি কি এই অর্ডারটি মুছে ফেলতে চান?')) return
-
+  async function payOrder(order: Order, method: 'cash' | 'bkash' | 'card') {
     try {
-      const { error: billsError } = await supabase.from('bills').delete().eq('order_id', orderId)
-      if (billsError) throw billsError
-
-      const { error: itemsError } = await supabase.from('order_items').delete().eq('order_id', orderId)
-      if (itemsError) throw itemsError
-
-      const { error: orderError } = await supabase.from('orders').delete().eq('id', orderId)
-      if (orderError) throw orderError
-
-      toast.success('অর্ডারটি মুছে ফেলা হয়েছে')
-      await fetchOrders()
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'অজানা ত্রুটি'
-      toast.error(`অর্ডার মুছতে সমস্যা: ${message}`)
+      const { error: billError } = await supabase.from('bills').insert({
+        order_id: order.id, subtotal: order.subtotal, discount: order.discount,
+        tax: 0, total: order.total, payment_method: method,
+      })
+      if (billError && !billError.message.toLowerCase().includes('unique')) throw billError
+      const { error: updateError } = await supabase.from('orders').update({ status: 'served' }).eq('id', order.id)
+      if (updateError) throw updateError
+      if (order.table_id) await supabase.from('restaurant_tables').update({ status: 'available' }).eq('id', order.table_id)
+      toast.success('পেমেন্ট সম্পন্ন হয়েছে')
+      setActiveReceipt(order)
+      window.setTimeout(() => printReceipt(), 150)
+      await loadData()
+    } catch (error) {
+      toast.error(`পেমেন্টে সমস্যা: ${error instanceof Error ? error.message : 'অজানা ত্রুটি'}`)
     }
   }
 
-  async function handleResetAllOrders() {
+  async function deleteOrder(order: Order) {
+    if (!window.confirm('এই অর্ডারটি মুছে ফেলবেন?')) return
     try {
-      const { error: billsError } = await supabase
-        .from('bills')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000')
-      if (billsError) throw billsError
-
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000')
-      if (itemsError) throw itemsError
-
-      const { error: ordersError } = await supabase
-        .from('orders')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000')
-      if (ordersError) throw ordersError
-
-      const { error: tablesError } = await supabase
-        .from('restaurant_tables')
-        .update({ status: 'available' })
-        .neq('id', '00000000-0000-0000-0000-000000000000')
-      if (tablesError) throw tablesError
-
-      localStorage.removeItem('pompom_offline_orders')
-      toast.success('সব অর্ডার ও বিল রিসেট হয়েছে')
-      setIsResetConfirmOpen(false)
-      await fetchOrders()
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'অজানা ত্রুটি'
-      toast.error(`রিসেট করতে সমস্যা: ${message}`)
+      const { error: billError } = await supabase.from('bills').delete().eq('order_id', order.id)
+      if (billError) throw billError
+      const { error: itemError } = await supabase.from('order_items').delete().eq('order_id', order.id)
+      if (itemError) throw itemError
+      const { error } = await supabase.from('orders').delete().eq('id', order.id)
+      if (error) throw error
+      await loadData()
+      toast.success('অর্ডার মুছে ফেলা হয়েছে')
+    } catch (error) {
+      toast.error(`মুছতে সমস্যা: ${error instanceof Error ? error.message : 'অজানা ত্রুটি'}`)
     }
   }
 
-  function printCustomer(order: Order) {
-    setActiveOrderForReceipt(order)
-    window.setTimeout(() => handlePrintCustomerReceipt(), 150)
-  }
-
-  function printKot(order: Order) {
-    setActiveOrderForKot(order)
-    window.setTimeout(() => handlePrintKitchenReceipt(), 150)
-  }
-
-  const normalizedSearch = searchTerm.trim().toLowerCase()
-  const filteredOrders = orders.filter((order) => {
-    const matchesSearch =
-      order.id.toLowerCase().includes(normalizedSearch) ||
-      getOrderToken(order).toLowerCase().includes(normalizedSearch) ||
-      Boolean(order.customer_name?.toLowerCase().includes(normalizedSearch))
-    const matchesStatus = statusFilter === 'all' || order.status === statusFilter
-    return matchesSearch && matchesStatus
-  })
+  const visibleOrders = orders.filter((order) =>
+    order.id.toLowerCase().includes(search.trim().toLowerCase()) ||
+    tokenOf(order).toLowerCase().includes(search.trim().toLowerCase()) ||
+    Boolean(order.customer_name?.toLowerCase().includes(search.trim().toLowerCase())),
+  )
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col items-start justify-between gap-4 border-b border-neutral-200 pb-4 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-black text-neutral-900">
-            <Receipt className="h-6 w-6 text-[#CC0000]" />
-            POS ও বিলিং কাউন্টার
-          </h1>
-          <p className="mt-1 text-xs text-neutral-500">
-            অর্ডারের বিল তৈরি, পেমেন্ট গ্রহণ এবং Customer ও Kitchen Copy প্রিন্ট করুন
-          </p>
+      <header className="border-b pb-4">
+        <h1 className="flex items-center gap-2 text-2xl font-black"><Receipt className="h-6 w-6 text-red-700" /> POS ও বিলিং কাউন্টার</h1>
+        <p className="mt-1 text-xs text-neutral-500">Counter, Website ও Delivery—সব অর্ডারের একক সিরিয়াল তালিকা</p>
+      </header>
+
+      <form onSubmit={createCounterOrder} className="space-y-4 rounded-xl border bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-bold">Counter থেকে নতুন অর্ডার</h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="text-xs font-semibold">অর্ডারের ধরন
+            <select value={orderType} onChange={(e) => setOrderType(e.target.value as 'dine_in' | 'takeaway')} className="mt-1 w-full rounded border p-2">
+              <option value="dine_in">Dine In</option><option value="takeaway">Take Away</option>
+            </select>
+          </label>
+          {orderType === 'dine_in' && <label className="text-xs font-semibold">টেবিল
+            <select value={tableId} onChange={(e) => setTableId(e.target.value)} className="mt-1 w-full rounded border p-2">
+              <option value="">টেবিল বেছে নিন</option>
+              {tables.map((table) => <option key={table.id} value={table.id}>টেবিল {table.table_number}</option>)}
+            </select>
+          </label>}
+          <label className="text-xs font-semibold">কাস্টমারের নাম
+            <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="mt-1 w-full rounded border p-2" placeholder="ঐচ্ছিক" />
+          </label>
+          <label className="text-xs font-semibold">ফোন নম্বর
+            <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="mt-1 w-full rounded border p-2" placeholder="ঐচ্ছিক" />
+          </label>
         </div>
 
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <button
-            type="button"
-            onClick={() => setIsResetConfirmOpen(true)}
-            className="flex items-center gap-1.5 rounded-lg border border-red-300 bg-red-100 px-3 py-2 text-xs font-bold text-red-700 transition-colors hover:bg-red-200"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            সব অর্ডার রিসেট
-          </button>
-
-          <div className="relative flex-1 sm:w-56">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
-            <input
-              type="text"
-              aria-label="অর্ডার খুঁজুন"
-              placeholder="টোকেন বা নাম খুঁজুন…"
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              className="w-full rounded-lg border border-neutral-300 py-2 pl-9 pr-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#CC0000]"
-            />
-          </div>
-
-          <select
-            aria-label="স্ট্যাটাস দিয়ে ফিল্টার"
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-            className="rounded-lg border border-neutral-300 p-2 text-xs focus:outline-none"
-          >
-            <option value="all">সব স্ট্যাটাস</option>
-            <option value="new">নতুন</option>
-            <option value="preparing">রান্না হচ্ছে</option>
-            <option value="ready">প্রস্তুত</option>
-            <option value="served">পরিশোধিত / সার্ভড</option>
-          </select>
+        <div className="space-y-2">
+          {items.map((item, index) => <div key={index} className="grid grid-cols-12 gap-2">
+            <input className="col-span-6 rounded border p-2 text-sm" value={item.item_name} onChange={(e) => updateItem(index, 'item_name', e.target.value)} placeholder="আইটেমের নাম" />
+            <input className="col-span-2 rounded border p-2 text-sm" type="number" min="1" value={item.quantity} onChange={(e) => updateItem(index, 'quantity', e.target.value)} aria-label="পরিমাণ" />
+            <input className="col-span-3 rounded border p-2 text-sm" type="number" min="0" step="0.01" value={item.price} onChange={(e) => updateItem(index, 'price', e.target.value)} placeholder="একক দাম" aria-label="একক দাম" />
+            <button type="button" className="col-span-1 flex justify-center text-red-600" onClick={() => setItems((old) => old.length > 1 ? old.filter((_, i) => i !== index) : old)} aria-label="আইটেম সরান"><Trash2 className="h-4 w-4" /></button>
+          </div>)}
+          <button type="button" onClick={() => setItems((old) => [...old, { item_name: '', quantity: 1, price: 0 }])} className="flex items-center gap-1 text-sm font-bold text-red-700"><Plus className="h-4 w-4" /> আইটেম যোগ করুন</button>
         </div>
-      </div>
 
-      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
+        <div className="flex flex-wrap items-end justify-between gap-3 border-t pt-3">
+          <label className="text-xs font-semibold">ছাড়
+            <input type="number" min="0" step="0.01" value={discount} onChange={(e) => setDiscount(Number(e.target.value))} className="mt-1 block w-32 rounded border p-2" />
+          </label>
+          <div className="text-right text-sm"><div>সাবটোটাল: ৳ {subtotal.toFixed(2)}</div><div className="font-black">মোট: ৳ {total.toFixed(2)}</div></div>
+          <button disabled={saving} className="rounded-lg bg-red-700 px-4 py-2 font-bold text-white disabled:opacity-50">{saving ? 'তৈরি হচ্ছে…' : 'অর্ডার তৈরি করুন'}</button>
+        </div>
+      </form>
+
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-bold">সব অর্ডার · একক সিরিয়াল</h2>
+          <div className="flex gap-2"><input value={search} onChange={(e) => setSearch(e.target.value)} className="rounded border p-2 text-sm" placeholder="সিরিয়াল বা নাম খুঁজুন" /><button type="button" onClick={() => void loadData()} className="rounded border px-3 py-2 text-sm">রিফ্রেশ</button></div>
+        </div>
+        <div className="overflow-x-auto rounded-xl border bg-white">
           <table className="w-full text-left text-xs">
-            <thead className="border-b bg-neutral-50 font-bold text-neutral-600">
-              <tr>
-                <th className="p-3">টোকেন নং</th>
-                <th className="p-3">ধরন</th>
-                <th className="p-3">কাস্টমার</th>
-                <th className="p-3">আইটেমসমূহ</th>
-                <th className="p-3">মোট বিল</th>
-                <th className="p-3">স্ট্যাটাস</th>
-                <th className="p-3 text-center">দ্রুত পেমেন্ট</th>
-                <th className="p-3 text-center">প্রিন্ট</th>
-                <th className="p-3 text-right">মুছুন</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={9} className="p-8 text-center text-neutral-500">
-                    অর্ডার লোড হচ্ছে…
-                  </td>
-                </tr>
-              ) : filteredOrders.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="p-8 text-center text-neutral-400">
-                    কোনো অর্ডার পাওয়া যায়নি। নতুন অর্ডার এলে এখানে দেখা যাবে।
-                  </td>
-                </tr>
-              ) : (
-                filteredOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-neutral-50/80">
-                    <td className="p-3 font-mono font-black text-neutral-800">{getOrderToken(order)}</td>
-                    <td className="p-3 font-semibold">{getOrderTypeLabel(order)}</td>
-                    <td className="p-3 text-neutral-600">
-                      <div className="font-bold text-neutral-900">{order.customer_name || 'গেস্ট'}</div>
-                      {order.customer_phone && (
-                        <div className="font-mono text-[10px] text-neutral-400">{order.customer_phone}</div>
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <div className="max-w-xs space-y-0.5">
-                        {order.order_items?.map((item, index) => (
-                          <span
-                            key={index}
-                            className="mr-1 inline-block rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-800"
-                          >
-                            {item.item_name} ({item.quantity}×)
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="p-3 text-sm font-black text-[#CC0000]">৳ {order.total}</td>
-                    <td className="p-3">
-                      <span
-                        className={`rounded px-2 py-0.5 text-[10px] font-bold ${
-                          order.status === 'served'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : order.status === 'ready'
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-amber-100 text-amber-800'
-                        }`}
-                      >
-                        {statusLabels[order.status] ?? order.status}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center">
-                      {order.status !== 'served' ? (
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => void handlePayment(order, 'cash')}
-                            title="ক্যাশ পেমেন্ট"
-                            className="flex items-center gap-1 rounded bg-emerald-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-700"
-                          >
-                            <DollarSign className="h-3 w-3" /> ক্যাশ
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handlePayment(order, 'bkash')}
-                            title="বিকাশ পেমেন্ট"
-                            className="flex items-center gap-1 rounded bg-pink-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-pink-700"
-                          >
-                            <Smartphone className="h-3 w-3" /> বিকাশ
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handlePayment(order, 'card')}
-                            title="কার্ড পেমেন্ট"
-                            className="flex items-center gap-1 rounded bg-blue-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-blue-700"
-                          >
-                            <CreditCard className="h-3 w-3" /> কার্ড
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="flex items-center justify-center gap-1 text-[11px] font-bold text-emerald-600">
-                          <CheckCircle className="h-3.5 w-3.5" /> পরিশোধিত
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => printCustomer(order)}
-                          title="কাস্টমার কপি প্রিন্ট"
-                          className="flex items-center gap-1 rounded bg-[#CC0000] px-2.5 py-1 text-[10px] font-bold text-white shadow-sm hover:bg-red-700"
-                        >
-                          <Printer className="h-3 w-3 text-yellow-300" /> কাস্টমার কপি
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => printKot(order)}
-                          title="কিচেন কপি প্রিন্ট"
-                          className="flex items-center gap-1 rounded bg-neutral-800 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-black"
-                        >
-                          <Printer className="h-3 w-3 text-neutral-300" /> কিচেন কপি (KOT)
-                        </button>
-                      </div>
-                    </td>
-                    <td className="p-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteOrder(order.id)}
-                        title="অর্ডার মুছুন"
-                        aria-label="অর্ডার মুছুন"
-                        className="rounded p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
+            <thead className="bg-neutral-50 font-bold"><tr><th className="p-3">সিরিয়াল</th><th className="p-3">ধরন / টেবিল</th><th className="p-3">কাস্টমার</th><th className="p-3">আইটেম</th><th className="p-3">মোট</th><th className="p-3">স্ট্যাটাস</th><th className="p-3">পেমেন্ট / প্রিন্ট</th></tr></thead>
+            <tbody className="divide-y">
+              {loading ? <tr><td colSpan={7} className="p-6 text-center">লোড হচ্ছে…</td></tr> : visibleOrders.length === 0 ? <tr><td colSpan={7} className="p-6 text-center">কোনো অর্ডার নেই</td></tr> : visibleOrders.map((order) => <tr key={order.id}>
+                <td className="p-3 font-black">{tokenOf(order)}</td><td className="p-3">{orderTypeOf(order)}</td>
+                <td className="p-3">{order.customer_name || 'গেস্ট'}{order.customer_phone ? <div>{order.customer_phone}</div> : null}</td>
+                <td className="p-3">{order.order_items?.map((item, i) => <div key={i}>{item.item_name} × {item.quantity}</div>)}</td>
+                <td className="p-3 font-bold">৳ {order.total}</td><td className="p-3">{statusText[order.status] ?? order.status}</td>
+                <td className="space-x-1 p-3">
+                  {order.status !== 'served' && <><button type="button" onClick={() => void payOrder(order, 'cash')} title="ক্যাশ পেমেন্ট" className="rounded bg-emerald-600 p-1 text-white"><DollarSign className="h-4 w-4" /></button><button type="button" onClick={() => void payOrder(order, 'bkash')} title="বিকাশ পেমেন্ট" className="rounded bg-pink-600 p-1 text-white"><Smartphone className="h-4 w-4" /></button><button type="button" onClick={() => void payOrder(order, 'card')} title="কার্ড পেমেন্ট" className="rounded bg-blue-600 p-1 text-white"><CreditCard className="h-4 w-4" /></button></>}
+                  {order.status === 'served' && <CheckCircle className="inline h-4 w-4 text-emerald-600" />}
+                  <button type="button" onClick={() => { setActiveReceipt(order); window.setTimeout(() => printReceipt(), 150) }} title="বিল প্রিন্ট" className="rounded bg-red-700 p-1 text-white"><Printer className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => { setActiveKot(order); window.setTimeout(() => printKot(), 150) }} title="কিচেন কপি প্রিন্ট" className="rounded bg-neutral-800 p-1 text-white"><Receipt className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => void deleteOrder(order)} title="অর্ডার মুছুন" className="rounded bg-neutral-200 p-1 text-red-700"><Trash2 className="h-4 w-4" /></button>
+                </td>
+              </tr>)}
             </tbody>
           </table>
         </div>
-      </div>
-
-      {isResetConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 text-center text-neutral-900 shadow-2xl">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-100 text-red-600">
-              <AlertTriangle className="h-7 w-7" />
-            </div>
-            <div>
-              <h3 className="text-base font-black text-neutral-900">সব অর্ডার ও বিল রিসেট করবেন?</h3>
-              <p className="mt-1 text-xs leading-relaxed text-neutral-500">
-                এই কাজ করলে সব অর্ডার, টোকেন ও বিলিং ডেটা মুছে যাবে এবং সব টেবিল ফাঁকা হবে। মেনু ও কাঁচামাল মুছবে না।
-              </p>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setIsResetConfirmOpen(false)}
-                className="flex-1 rounded-xl border border-neutral-300 py-2.5 text-xs font-bold text-neutral-600"
-              >
-                বাতিল
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleResetAllOrders()}
-                className="flex-1 rounded-xl bg-red-600 py-2.5 text-xs font-bold text-white shadow hover:bg-red-700"
-              >
-                হ্যাঁ, রিসেট করুন
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </section>
 
       <div className="hidden">
-        {activeOrderForReceipt && (
-          <CustomerReceipt ref={customerReceiptRef} order={activeOrderForReceipt} settings={settings} />
-        )}
-        {activeOrderForKot && <KitchenReceipt ref={kitchenReceiptRef} order={activeOrderForKot} />}
+        {activeReceipt && <CustomerReceipt ref={receiptRef} order={activeReceipt} settings={settings} />}
+        {activeKot && <KitchenReceipt ref={kotRef} order={activeKot} />}
       </div>
     </div>
   )
 }
-
-// এই ফাইলটি অর্ডার দেখানো, পেমেন্ট ও প্রিন্টের জন্য। Counter থেকে নতুন অর্ডার
-// তৈরি এবং Website/Counter-এর shared token বরাদ্দ অর্ডার তৈরির কোড ও database
-// schema-তে করতে হবে। orders টেবিলে token_number না থাকলে টেবিলে 'সিরিয়াল নেই' দেখাবে।
