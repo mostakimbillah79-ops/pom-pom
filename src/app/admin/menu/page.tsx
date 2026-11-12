@@ -52,43 +52,50 @@ export default function AdminMenuPage() {
     setLoading(false)
   }
 
-  // Handle Local Computer Image Selection & Conversion
+  // Fixed & Robust Image Upload & Preview Handler
   function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
 
     const reader = new FileReader()
     reader.onload = (event) => {
-      const img = new Image()
+      const resultString = event.target?.result as string
+      if (!resultString) return
+
+      const img = new window.Image()
       img.onload = () => {
         const canvas = document.createElement('canvas')
-        const maxWidth = 700
+        const maxWidth = 600
         const scale = img.width > maxWidth ? maxWidth / img.width : 1
-        canvas.width = img.width * scale
-        canvas.height = img.height * scale
+        canvas.width = Math.floor(img.width * scale)
+        canvas.height = Math.floor(img.height * scale)
         const ctx = canvas.getContext('2d')
-        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height)
-        const compressed = canvas.toDataURL('image/jpeg', 0.85)
-        setImageUrl(compressed)
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+          const compressed = canvas.toDataURL('image/jpeg', 0.8)
+          setImageUrl(compressed)
+        } else {
+          setImageUrl(resultString)
+        }
       }
-      img.src = event.target?.result as string
+      img.onerror = () => {
+        setImageUrl(resultString)
+      }
+      img.src = resultString
     }
     reader.readAsDataURL(file)
   }
 
-  // Move item up or down in order
   async function handleMoveOrder(index: number, direction: 'up' | 'down') {
     const newItems = [...items]
     const targetIndex = direction === 'up' ? index - 1 : index + 1
 
     if (targetIndex < 0 || targetIndex >= newItems.length) return
 
-    // Swap items
     const temp = newItems[index]
     newItems[index] = newItems[targetIndex]
     newItems[targetIndex] = temp
 
-    // Assign new sort_order values
     const updated = newItems.map((item, idx) => ({
       ...item,
       sort_order: idx + 1,
@@ -97,7 +104,6 @@ export default function AdminMenuPage() {
     setItems(updated)
     localStorage.setItem('pompom_custom_menu', JSON.stringify(updated))
 
-    // Save to Supabase
     try {
       for (const it of updated) {
         await supabase.from('menu_items').update({ sort_order: it.sort_order }).eq('id', it.id)
@@ -137,7 +143,10 @@ export default function AdminMenuPage() {
       image_url: imageUrl || '/menu-card.png',
       description: description.trim(),
       is_available: true,
-      sort_order: editingId !== null ? items.find(i => i.id === editingId)?.sort_order || items.length + 1 : items.length + 1,
+      sort_order:
+        editingId !== null
+          ? items.find((i) => i.id === editingId)?.sort_order || items.length + 1
+          : items.length + 1,
     }
 
     try {
@@ -157,7 +166,7 @@ export default function AdminMenuPage() {
     }
 
     resetForm()
-    alert('মেনু আইটেম ও সিরিয়াল সফলভাবে সেভ হয়েছে!')
+    alert('মেনু আইটেম ও ছবি সফলভাবে সেভ হয়েছে!')
   }
 
   async function handleDelete(id: string | number) {
@@ -258,7 +267,7 @@ export default function AdminMenuPage() {
                 />
               </label>
               <p className="text-[11px] text-neutral-500">
-                যেকোনো ছবি সিলেক্ট করলেই তা স্বয়ংক্রিয়ভাবে রিসাইজ ও সেট হয়ে যাবে।
+                ছবি সিলেক্ট করার সাথে সাথেই প্রিভিউ দেখতে পাবেন এবং সেভ করলে সাইটে আপডেট হয়ে যাবে।
               </p>
             </div>
           </div>
@@ -279,10 +288,10 @@ export default function AdminMenuPage() {
       <div className="bg-white p-6 rounded-2xl border border-neutral-200 shadow-sm space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-black text-neutral-900">
-            মেনু সিরিয়াল ও সাজানো (Drag & Reorder) ({items.length})
+            মেনু সিরিয়াল ও সাজানো ({items.length})
           </h2>
           <p className="text-xs text-neutral-500">
-            বাটন দিয়ে উপরে বা নিচে নিয়ে সিরিয়াল সাজান—মেইন সাইটে সাথে সাথে আপডেট হয়ে যাবে।
+            বাটন দিয়ে উপরে বা নিচে নিয়ে সিরিয়াল সাজান।
           </p>
         </div>
 
