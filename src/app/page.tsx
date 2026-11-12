@@ -24,6 +24,7 @@ interface MenuItem {
   image_url?: string
   description?: string
   is_available?: boolean
+  sort_order?: number
 }
 
 const FALLBACK_MENU: MenuItem[] = [
@@ -34,6 +35,7 @@ const FALLBACK_MENU: MenuItem[] = [
     category: 'Chicken',
     image_url: '/menu-card.png',
     description: 'Hot & crispy signature fried chicken',
+    sort_order: 1,
   },
   {
     id: 2,
@@ -42,6 +44,7 @@ const FALLBACK_MENU: MenuItem[] = [
     category: 'Bucket',
     image_url: '/menu-card.png',
     description: 'Family crispy chicken bucket with dips',
+    sort_order: 2,
   },
   {
     id: 3,
@@ -50,6 +53,7 @@ const FALLBACK_MENU: MenuItem[] = [
     category: 'Burger',
     image_url: '/menu-card.png',
     description: 'Crunchy chicken fillet with spicy mayo',
+    sort_order: 3,
   },
   {
     id: 4,
@@ -58,6 +62,7 @@ const FALLBACK_MENU: MenuItem[] = [
     category: 'Snacks',
     image_url: '/menu-card.png',
     description: 'Glazed fiery crispy chicken wings',
+    sort_order: 4,
   },
 ]
 
@@ -66,7 +71,6 @@ export default function HomePage() {
   const [whatsappNumber, setWhatsappNumber] = useState<string>('8801700000000')
   const [selectedCategory, setSelectedCategory] = useState<string>('All')
 
-  // Dynamic Settings States (Editable from Admin -> Settings)
   const [shopName, setShopName] = useState<string>('POM POM')
   const [shopAddress, setShopAddress] = useState<string>('Jhenaidah Sadar, Jhenaidah, Bangladesh')
   const [buttonColor, setButtonColor] = useState<string>('#CC0000')
@@ -79,7 +83,6 @@ export default function HomePage() {
   const [featuredBadge, setFeaturedBadge] = useState<string>('50% OFFER')
   const [featuredImage, setFeaturedImage] = useState<string>('/menu-card.png')
 
-  // Location Check Modal State
   const [showLocationModal, setShowLocationModal] = useState<boolean>(false)
   const [pendingOrderText, setPendingOrderText] = useState<string>('')
   const [locationStatus, setLocationStatus] = useState<
@@ -116,13 +119,18 @@ export default function HomePage() {
       const { data: items } = await supabase
         .from('menu_items')
         .select('*')
+        .order('sort_order', { ascending: true, nullsFirst: false })
         .order('id', { ascending: true })
 
       if (items && items.length > 0) {
         setMenuItems(items.filter((i) => i.is_available !== false))
       } else {
         const localMenu = localStorage.getItem('pompom_custom_menu')
-        if (localMenu) setMenuItems(JSON.parse(localMenu))
+        if (localMenu) {
+          const parsed = JSON.parse(localMenu)
+          parsed.sort((a: MenuItem, b: MenuItem) => (a.sort_order || 0) - (b.sort_order || 0))
+          setMenuItems(parsed)
+        }
       }
 
       const { data: settingsData } = await supabase.from('settings').select('*')
@@ -145,11 +153,15 @@ export default function HomePage() {
         if (map.featured_image) setFeaturedImage(map.featured_image)
       }
     } catch {
-      // Keep local/fallback data safely
+      const localMenu = localStorage.getItem('pompom_custom_menu')
+      if (localMenu) {
+        const parsed = JSON.parse(localMenu)
+        parsed.sort((a: MenuItem, b: MenuItem) => (a.sort_order || 0) - (b.sort_order || 0))
+        setMenuItems(parsed)
+      }
     }
   }
 
-  // Haversine Formula (Distance in KM)
   function getDistanceFromLatLonInKm(lat1: number, lon1: number, lat2: number, lon2: number) {
     const R = 6371
     const dLat = ((lat2 - lat1) * Math.PI) / 180
@@ -183,8 +195,6 @@ export default function HomePage() {
       (position) => {
         const userLat = position.coords.latitude
         const userLon = position.coords.longitude
-
-        // Jhenaidah Sadar Center
         const centerLat = 23.5448
         const centerLon = 89.1726
 
@@ -261,7 +271,6 @@ export default function HomePage() {
             ঝিনাইদহ শহরের সেরা ক্রিস্পি চিকেন ফ্রাই ও বার্গার এখন আপনার হাতের মুঠোয়।
           </p>
 
-          {/* 3 Buttons */}
           <div className="w-full max-w-2xl mt-7 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4">
             <button
               onClick={() => initiateDeliveryOrder('General Delivery Order')}
@@ -291,7 +300,6 @@ export default function HomePage() {
             </button>
           </div>
 
-          {/* Chicken Fry Bucket Image */}
           <div className="mt-8 w-full max-w-md mx-auto">
             <div
               className="relative rounded-2xl overflow-hidden border-4 shadow-2xl bg-neutral-900"
@@ -378,7 +386,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 3. MENU SECTION (Mobile-First: 2 Cards Per Row) */}
+      {/* 3. MENU SECTION (Ordered Automatically by Admin sort_order) */}
       <section id="menu-section" className="max-w-6xl mx-auto px-4 py-8 sm:py-12">
         <div className="flex items-center justify-center gap-3 sm:gap-5 mb-6">
           <div className="h-[2px] flex-1 bg-neutral-300" />
@@ -388,7 +396,6 @@ export default function HomePage() {
           <div className="h-[2px] flex-1 bg-neutral-300" />
         </div>
 
-        {/* Category Filter Pills */}
         <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-4">
           {categories.map((cat) => (
             <button
@@ -406,7 +413,6 @@ export default function HomePage() {
           ))}
         </div>
 
-        {/* 2 Columns on Mobile */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-5">
           {filteredMenu.map((item) => (
             <div
@@ -450,7 +456,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 4. LOCATION / DINE-IN SECTION */}
+      {/* 4. LOCATION SECTION */}
       <section id="location-section" className="bg-white border-t border-neutral-200 py-10 sm:py-14 px-4">
         <div className="max-w-6xl mx-auto">
           <div className="flex items-center justify-center gap-3 sm:gap-5 mb-8">
@@ -553,7 +559,7 @@ export default function HomePage() {
         </div>
       </footer>
 
-      {/* 6. JHENAIDAH SADAR LOCATION CHECK POPUP */}
+      {/* LOCATION POPUP */}
       {showLocationModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-center">
@@ -642,8 +648,8 @@ export default function HomePage() {
                 </div>
                 <div className="flex flex-col gap-2.5 pt-2">
                   <button
-                    onClick={() => openWhatsAppOrder('TAKEAWAY')}
                     style={{ backgroundColor: buttonColor }}
+                    onClick={() => openWhatsAppOrder('TAKEAWAY')}
                     className="w-full min-h-[48px] text-white font-black text-sm rounded-xl shadow"
                   >
                     Order as TAKEAWAY
