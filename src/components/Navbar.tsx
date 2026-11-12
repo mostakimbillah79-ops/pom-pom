@@ -27,19 +27,16 @@ export function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
 
-  // Role: 'none' | 'kitchen' | 'admin'
   const [userRole, setUserRole] = useState<'none' | 'kitchen' | 'admin'>('none')
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false)
   const [loginRole, setLoginRole] = useState<'admin' | 'kitchen'>('admin')
   const [pinInput, setPinInput] = useState<string>('')
   const [pinError, setPinError] = useState<string>('')
 
-  // Dynamic Brand & Colors from Settings
   const [shopName, setShopName] = useState<string>('POM POM')
   const [primaryColor, setPrimaryColor] = useState<string>('#CC0000')
   const [accentColor, setAccentColor] = useState<string>('#FFD700')
 
-  // Forgot / Reset PIN flow state
   const [isForgotModalOpen, setIsForgotModalOpen] = useState<boolean>(false)
   const [recoveryMethod, setRecoveryMethod] = useState<'whatsapp' | 'email'>('whatsapp')
   const [enteredOtp, setEnteredOtp] = useState<string>('')
@@ -48,7 +45,6 @@ export function Navbar() {
   const [recoveryStep, setRecoveryStep] = useState<'request' | 'verify'>('request')
   const [recoveryError, setRecoveryError] = useState<string>('')
 
-  // Settings cached
   const [ownerWhatsapp, setOwnerWhatsapp] = useState<string>('')
   const [ownerEmail, setOwnerEmail] = useState<string>('')
 
@@ -61,7 +57,6 @@ export function Navbar() {
   }, [pathname])
 
   async function loadSecurityAndThemeSettings() {
-    // Load local cache first for instant UI
     setShopName(localStorage.getItem('pompom_shop_name') || 'POM POM')
     setPrimaryColor(localStorage.getItem('pompom_primary_color') || '#CC0000')
     setAccentColor(localStorage.getItem('pompom_accent_color') || '#FFD700')
@@ -100,7 +95,7 @@ export function Navbar() {
         }
       }
     } catch {
-      // Offline fallback already loaded
+      // Offline fallback
     }
   }
 
@@ -117,7 +112,7 @@ export function Navbar() {
         setPinInput('')
         router.push('/admin')
       } else {
-        setPinError('ভুল অ্যাডমিন পিন! সঠিক পিন কোড দিন (ভুলে গেলে "পিন ভুলে গেছেন?" এ ক্লিক করুন)')
+        setPinError('ভুল অ্যাডমিন পিন! সঠিক পিন কোড দিন।')
       }
     } else if (loginRole === 'kitchen') {
       const kitchenPin = localStorage.getItem('pompom_kitchen_pin') || '2222'
@@ -128,7 +123,7 @@ export function Navbar() {
         setPinInput('')
         router.push('/kitchen')
       } else {
-        setPinError('ভুল কিচেন পিন! সঠিক কিচেন স্টাফ পিন দিন (ভুলে গেলে "পিন ভুলে গেছেন?" এ ক্লিক করুন)')
+        setPinError('ভুল কিচেন পিন! সঠিক কিচেন স্টাফ পিন দিন।')
       }
     }
   }
@@ -147,17 +142,17 @@ export function Navbar() {
     if (recoveryMethod === 'whatsapp') {
       const phone = ownerWhatsapp || localStorage.getItem('pompom_whatsapp') || '8801700000000'
       const cleanPhone = phone.replace(/[^0-9]/g, '')
-      const msg = `🔐 *${shopName} সিকিউরিটি ভেরিফিকেশন কোড:* ${otp}\nএই কোডটি দিয়ে আপনার ${loginRole === 'admin' ? 'অ্যাডমিন পিন' : 'কিচেন পিন'} পরিবর্তন করুন।`
+      const msg = `🔐 *${shopName} সিকিউরিটি ভেরিফিকেশন কোড:* ${otp}`
       const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`
       window.open(url, '_blank')
       setRecoveryStep('verify')
     } else {
       const email = ownerEmail || localStorage.getItem('pompom_recovery_email')
       if (!email) {
-        setRecoveryError('কোনো রিকভারি ইমেইল সেটিংসে যুক্ত করা নেই। হোয়াটসঅ্যাপ ব্যবহার করুন।')
+        setRecoveryError('কোনো রিকভারি ইমেইল সেটিংসে যুক্ত করা নেই।')
         return
       }
-      alert(`ভেরিফিকেশন কোড (${otp}) আপনার ইমেইল ${email}-এ পাঠানো হয়েছে।`)
+      alert(`ভেরিফিকেশন কোড (${otp}) ইমেইলে পাঠানো হয়েছে।`)
       setRecoveryStep('verify')
     }
   }
@@ -165,7 +160,7 @@ export function Navbar() {
   async function handleVerifyAndResetPin() {
     setRecoveryError('')
     if (enteredOtp.trim() !== generatedOtp) {
-      setRecoveryError('ভুল ভেরিফিকেশন কোড! সঠিক ৪ ডিজিট দিন।')
+      setRecoveryError('ভুল ভেরিফিকেশন কোড!')
       return
     }
 
@@ -187,8 +182,7 @@ export function Navbar() {
     setIsForgotModalOpen(false)
     setRecoveryStep('request')
     setPinInput(newPin.trim())
-    setRecoveryError('')
-    alert('অভিনন্দন! আপনার নতুন পিন কোড সফলভাবে সেট হয়েছে। এবার প্রবেশ করুন।')
+    alert('নতুন পিন কোড সফলভাবে সেট হয়েছে!')
   }
 
   const isAdmin = userRole === 'admin'
@@ -203,7 +197,7 @@ export function Navbar() {
     { href: '/admin/expenses', label: 'খরচ ও বেতন', icon: Wallet },
     { href: '/admin/tables', label: 'টেবিল', icon: ShoppingBag },
     { href: '/admin/employees', label: 'স্টাফ তালিকা', icon: Users },
-    { href: '/admin/settings', label: 'সেটিংস ও ডিজাইন এডিট', icon: Settings },
+    { href: '/admin/settings', label: 'সেটিংস ও ডিজাইন', icon: Settings },
   ]
 
   return (
@@ -211,16 +205,15 @@ export function Navbar() {
       className="sticky top-0 z-50 text-white shadow-md border-b-4 transition-colors"
       style={{ backgroundColor: primaryColor, borderColor: accentColor }}
     >
-      {/* Top Header */}
       <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between gap-2">
-        {/* Brand Logo & Name */}
-        <Link href="/" className="flex items-center gap-2.5 shrink-0">
+        {/* Left: POM POM Logo (High Resolution & Clear) */}
+        <Link href="/" className="flex items-center gap-3 group">
           <div
-            className="bg-white p-1 rounded-full shadow-inner flex items-center justify-center h-11 w-11 sm:h-12 sm:w-12 border-2"
+            className="bg-white p-1 rounded-full shadow-md flex items-center justify-center h-12 w-12 sm:h-14 sm:w-14 border-2 shrink-0 overflow-hidden"
             style={{ borderColor: accentColor }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Logo" className="h-7 sm:h-8 object-contain" />
+            <img src="/logo.png" alt="Logo" className="w-full h-full object-contain scale-110" />
           </div>
           <div>
             <div className="flex items-center gap-1.5">
@@ -246,7 +239,6 @@ export function Navbar() {
 
         {/* Right Side Controls */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Customer Menu Link */}
           <Link
             href="/"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold shadow transition-transform hover:scale-105"
@@ -254,10 +246,8 @@ export function Navbar() {
           >
             <UtensilsCrossed className="w-4 h-4" />
             <span className="hidden xs:inline">খাবারের মেনু</span>
-            <span className="xs:hidden">Menu</span>
           </Link>
 
-          {/* Kitchen Display Link (Staff or Admin) */}
           {(isKitchen || isAdmin) && (
             <Link
               href="/kitchen"
@@ -268,7 +258,6 @@ export function Navbar() {
             </Link>
           )}
 
-          {/* Admin Dashboard Link (Changed from মালিক ড্যাশবোর্ড to অ্যাডমিন ড্যাশবোর্ড) */}
           {isAdmin && (
             <Link
               href="/admin"
@@ -279,7 +268,6 @@ export function Navbar() {
             </Link>
           )}
 
-          {/* Staff Login / Logout Controls */}
           {userRole !== 'none' ? (
             <button
               onClick={handleLogout}
@@ -295,7 +283,7 @@ export function Navbar() {
                 setShowLoginModal(true)
                 setLoginRole('kitchen')
               }}
-              title="স্টাফ ও অ্যাডমিন লগইন"
+              title="স্টাফ লগইন"
               className="flex items-center gap-1 px-2.5 py-1.5 bg-black/30 hover:bg-black/50 text-white rounded-lg text-xs font-semibold transition-colors"
             >
               <Lock className="w-3 h-3" style={{ color: accentColor }} />
@@ -305,7 +293,7 @@ export function Navbar() {
         </div>
       </div>
 
-      {/* Admin Sub Navigation Bar */}
+      {/* Admin Sub Navigation */}
       {isAdmin && (pathname.startsWith('/admin') || pathname.startsWith('/kitchen')) && (
         <div className="bg-black/40 border-t border-white/15 px-4 py-1.5 overflow-x-auto">
           <div className="max-w-7xl mx-auto flex items-center gap-1.5">
@@ -343,7 +331,7 @@ export function Navbar() {
         </div>
       )}
 
-      {/* Role-based Login Modal (Kitchen Staff & Admin) */}
+      {/* Login Modal */}
       {showLoginModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-center text-neutral-900">
@@ -353,12 +341,9 @@ export function Navbar() {
 
             <div>
               <h3 className="text-base font-black text-neutral-900">লগইন নির্বাচন করুন</h3>
-              <p className="text-xs text-neutral-500 mt-0.5">
-                কাস্টম পিন দিয়ে আপনার প্যানেলে প্রবেশ করুন
-              </p>
+              <p className="text-xs text-neutral-500 mt-0.5">পিন দিয়ে আপনার প্যানেলে প্রবেশ করুন</p>
             </div>
 
-            {/* Role Switcher Tabs */}
             <div className="grid grid-cols-2 gap-2 bg-neutral-100 p-1 rounded-xl">
               <button
                 type="button"
@@ -370,7 +355,7 @@ export function Navbar() {
                 className={`py-2 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all ${
                   loginRole === 'kitchen'
                     ? 'bg-amber-600 text-white shadow'
-                    : 'text-neutral-600 hover:text-neutral-900'
+                    : 'text-neutral-600'
                 }`}
               >
                 <ChefHat className="w-4 h-4" />
@@ -385,9 +370,7 @@ export function Navbar() {
                 }}
                 style={loginRole === 'admin' ? { backgroundColor: primaryColor } : undefined}
                 className={`py-2 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all ${
-                  loginRole === 'admin'
-                    ? 'text-white shadow'
-                    : 'text-neutral-600 hover:text-neutral-900'
+                  loginRole === 'admin' ? 'text-white shadow' : 'text-neutral-600'
                 }`}
               >
                 <LayoutDashboard className="w-4 h-4" />
@@ -396,9 +379,6 @@ export function Navbar() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-neutral-700 block text-left">
-                আপনার গোপন পিন দিন:
-              </label>
               <input
                 type="password"
                 maxLength={8}
@@ -422,7 +402,7 @@ export function Navbar() {
                 className="text-neutral-500 hover:text-red-600 font-semibold flex items-center gap-1"
               >
                 <HelpCircle className="w-3.5 h-3.5 text-amber-500" />
-                <span>পিন ভুলে গেছেন? রিসেট করুন</span>
+                <span>পিন ভুলে গেছেন?</span>
               </button>
             </div>
 
@@ -447,155 +427,6 @@ export function Navbar() {
                 প্রবেশ করুন
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Forgot / Reset PIN Modal */}
-      {isForgotModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-center text-neutral-900">
-            <div className="w-12 h-12 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center mx-auto">
-              <KeyRound className="w-6 h-6" />
-            </div>
-
-            <div>
-              <h3 className="text-base font-black text-neutral-900">
-                {loginRole === 'admin' ? 'অ্যাডমিন পিন রিসেট' : 'কিচেন পিন রিসেট'}
-              </h3>
-              <p className="text-xs text-neutral-500 mt-0.5">
-                হোয়াটসঅ্যাপ বা ইমেইলের মাধ্যমে ওটিপি কোড দিয়ে নতুন পিন সেট করুন
-              </p>
-            </div>
-
-            {recoveryStep === 'request' ? (
-              <div className="space-y-3 text-left text-xs">
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">
-                    কোড পাঠানোর মাধ্যম বেছে নিন:
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setRecoveryMethod('whatsapp')}
-                      className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
-                        recoveryMethod === 'whatsapp'
-                          ? 'border-emerald-500 bg-emerald-50 text-emerald-800 font-bold'
-                          : 'border-neutral-200 text-neutral-600'
-                      }`}
-                    >
-                      <Smartphone className="w-4 h-4 text-emerald-600" />
-                      <span>হোয়াটসঅ্যাপ</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setRecoveryMethod('email')}
-                      className={`p-2.5 rounded-xl border flex flex-col items-center gap-1 transition-all ${
-                        recoveryMethod === 'email'
-                          ? 'border-blue-500 bg-blue-50 text-blue-800 font-bold'
-                          : 'border-neutral-200 text-neutral-600'
-                      }`}
-                    >
-                      <Mail className="w-4 h-4 text-blue-600" />
-                      <span>ইমেইল</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-neutral-50 p-3 rounded-xl border text-neutral-600">
-                  {recoveryMethod === 'whatsapp' ? (
-                    <p>
-                      📱 আপনার সেভ করা হোয়াটসঅ্যাপে (
-                      <strong>{ownerWhatsapp || 'সেটিংসে দেওয়া নম্বর'}</strong>) একটি ৪ ডিজিটের
-                      ভেরিফিকেশন কোড পাঠানো হবে।
-                    </p>
-                  ) : (
-                    <p>
-                      ✉️ আপনার সেভ করা ইমেইলে (
-                      <strong>{ownerEmail || 'সেটিংসে দেওয়া ইমেইল'}</strong>) কোড পাঠানো হবে।
-                    </p>
-                  )}
-                </div>
-
-                {recoveryError && (
-                  <p className="text-red-600 font-bold text-center">{recoveryError}</p>
-                )}
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsForgotModalOpen(false)}
-                    className="flex-1 py-2 rounded-xl border text-neutral-600 font-bold"
-                  >
-                    বাতিল
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSendOtp}
-                    className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow"
-                  >
-                    কোড পাঠান
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3 text-left text-xs">
-                <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-xl text-emerald-900 text-[11px]">
-                  ✅ ৪ ডিজিটের একটি ভেরিফিকেশন কোড পাঠানো হয়েছে।
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">
-                    ভেরিফিকেশন কোড (OTP):
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={4}
-                    placeholder="যেমন: 5824"
-                    value={enteredOtp}
-                    onChange={(e) => setEnteredOtp(e.target.value)}
-                    className="w-full text-center font-mono font-bold text-lg p-2 border-2 rounded-xl focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-neutral-700 block mb-1">
-                    নতুন সিক্রেট পিন কোড সেট করুন:
-                  </label>
-                  <input
-                    type="password"
-                    maxLength={8}
-                    placeholder="আপনার নতুন পিন..."
-                    value={newPin}
-                    onChange={(e) => setNewPin(e.target.value)}
-                    className="w-full text-center font-mono font-bold text-lg p-2 border-2 rounded-xl focus:outline-none focus:border-emerald-600"
-                  />
-                </div>
-
-                {recoveryError && (
-                  <p className="text-red-600 font-bold text-center">{recoveryError}</p>
-                )}
-
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setRecoveryStep('request')}
-                    className="flex-1 py-2 rounded-xl border text-neutral-600 font-bold"
-                  >
-                    পেছনে
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleVerifyAndResetPin}
-                    style={{ backgroundColor: primaryColor }}
-                    className="flex-1 py-2 text-white font-bold rounded-xl shadow"
-                  >
-                    নতুন পিন সেভ করুন
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
